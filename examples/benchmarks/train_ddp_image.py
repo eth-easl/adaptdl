@@ -28,7 +28,7 @@ parser.add_argument('--local_rank', default=-1, type=int, help='process rank in 
 parser.add_argument('--arch', default=None, type=str, help='model architecture')
 parser.add_argument('--nclasses', default=-1, type=int, help='number of classes in the train dataset')
 parser.add_argument('--train-dir', default=None, type=str, help='Training set directory')
-parser.add_argument('--num-epochs', default=1, type=int, help='Number of epochs')
+parser.add_argument('--num-epochs', default=10, type=int, help='Number of epochs')
 parser.add_argument('--num-dl', default=4, type=int, help='Number data loading workers')
 parser.add_argument('--ch-freq', default=10, type=int, help='Checkpoint iteration interval')
 parser.add_argument('--resume', default=False, action='store_true', help='Load from the latest checkpoint (if exists)')
@@ -62,9 +62,11 @@ def train(args): # how to set batch size, chunk size?
                                         ]))
 
 
-    # check sampling here
+        # check sampling here
     trainloader = adl.AdaptiveDataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_dl, drop_last=True)
 
+    if args.autoscale_bsz:
+        trainloader.autoscale_batch_size(4096, local_bsz_bounds=(32, 64), gradient_accumulation=True)
 
     model = models.__dict__[args.arch](num_classes=args.nclasses)
     model = model.to(args.local_rank)
@@ -72,10 +74,12 @@ def train(args): # how to set batch size, chunk size?
     optimizer = torch.optim.SGD(model.parameters(), lr=0.1,
                                 momentum=0.9,
                                 weight_decay=1e-4)
-    model = adl.AdaptiveDataParallel(model, optimizer, None, None)
+    lr_scheduler = MultiStepLR(optimizer, [30, 45], 0.1) # just for testing
 
-    for epoch in range(args.num_epochs):
+    model = adl.AdaptiveDataParallel(model, optimizer, lr_scheduler, None) # default scaler: AdaScale
 
+
+    for epoch in adl.remaining_epochs_until(args.num_epochs):
         print("Start epoch: ", epoch)
         model.train()
 
@@ -97,8 +101,12 @@ def train(args): # how to set batch size, chunk size?
             start_iter = time.time()
             i += 1
 
+            if i>100:
+                break
+
+
         if args.local_rank==0:
-            print(f"---- From worker with rank: {args.rank}, Timestamp is: {time.time()}, Epoch {epoch} took: {time.time()-start}", flush=True)
+            print(f"---- From worker with rank: {rank}, Timestamp is: {time.time()}, Epoch {epoch} took: {time.time()-start}", flush=True)
 
 
 if __name__ == "__main__":
@@ -108,7 +116,5 @@ if __name__ == "__main__":
     def handler(signum,_):
         print("Got a signal - do nothing for now, just exit")
         exit()
-
-    signal.signal(signal.SIGUSR1, handler)
 
     train(args)
