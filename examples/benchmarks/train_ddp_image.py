@@ -17,6 +17,7 @@ import time
 import signal
 
 import adaptdl
+from adaptdl.adaptdl.checkpoint import save_all_states
 import adaptdl.torch as adl
 
 from torch.optim.lr_scheduler import MultiStepLR
@@ -35,6 +36,12 @@ parser.add_argument('--resume', default=False, action='store_true', help='Load f
 parser.add_argument('--autoscale-bsz', dest='autoscale_bsz', default=False,
                     action='store_true', help='pollux - autoscale batchsize')
 
+
+def store_checkpoint(rank):
+
+    # TODO: what happens here if we are in the middle of an iteration - half of the model is updated?
+    if rank==0:
+        save_all_states()
 
 def train(args): # how to set batch size, chunk size?
 
@@ -114,7 +121,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     def handler(signum,_):
-        print("Got a signal - do nothing for now, just exit")
+        print("Got a signal - do a checkpoint")
+        store_checkpoint()
         exit()
 
     train(args)
